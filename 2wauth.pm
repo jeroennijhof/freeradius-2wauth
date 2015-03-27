@@ -104,7 +104,13 @@ sub authenticate {
     my $ldap_users = $$ldap_conf{'ldapusers'};
     my $ldap_group = $$ldap_conf{'ldapgroup'};
 
-    my $ldap = Net::LDAP->new( $ldap_server ) or die $@;
+    my $ldap = Net::LDAP->new( $ldap_server );
+    if (!$ldap) {
+        &radiusd::radlog( Info, "Can't connect to ldap server: $ldap_server" );
+        $RAD_REPLY{'Reply-Message'} = "2wauth denied access!";
+        db_close($dbh);
+        return RLM_MODULE_REJECT;
+    }
     $ldap->bind( "$user\@$domain", password => $password);
 
     my $result = $ldap->search(
@@ -185,23 +191,6 @@ sub post_proxy {
 sub post_auth {
 
     return RLM_MODULE_OK;
-}
-
-# Function to handle xlat
-sub xlat {
-
-    # Loads some external perl and evaluate it
-    my ( $filename, $a, $b, $c, $d ) = @_;
-    &radiusd::radlog( 1, "From xlat $filename " );
-    &radiusd::radlog( 1, "From xlat $a $b $c $d " );
-    local *FH;
-    open FH, $filename or die "open '$filename' $!";
-    local ($/) = undef;
-    my $sub = <FH>;
-    close FH;
-    my $eval = qq{ sub handler{ $sub;} };
-    eval $eval;
-    eval { main->handler; };
 }
 
 # Function to handle detach
