@@ -64,6 +64,8 @@ use constant Error => 4;
 use constant Proxy => 5;
 use constant Acct  => 6;
 
+## send_sms retries
+use constant sms_retry => 5;
 
 # Function to handle authenticate
 sub authenticate {
@@ -82,6 +84,9 @@ sub authenticate {
     $user = lc($tmp[0]);
 
     my $dbh = db_init();
+    if (!$dbh) {
+        return RLM_MODULE_REJECT;
+    }
 
     if (exists($RAD_REQUEST{'State'})) {
         &radiusd::radlog( Info, "$user\@$domain checking otp" );
@@ -100,27 +105,28 @@ sub authenticate {
 
     my $conf = new Config::Simple('/etc/freeradius/2wauth.conf');
     my $ldap_conf = $conf->param(-block => $domain);
-    my $ldap_server = $$ldap_conf{'ldapserver'};
-    my $ldap_users = $$ldap_conf{'ldapusers'};
-    my $ldap_group = $$ldap_conf{'ldapgroup'};
+    my $ldap_server = $$ldap_conf{'ldap_server'};
+    my $ldap_users = $$ldap_conf{'ldap_users'};
+    my $ldap_group = $$ldap_conf{'ldap_group'};
+    my $ldap_phone = $$ldap_conf{'ldap_phone'};
 
     my $ldap = Net::LDAP->new( $ldap_server );
     if (!$ldap) {
-        &radiusd::radlog( Info, "Can't connect to ldap server: $ldap_server" );
+        &radiusd::radlog( Info, "Can't connect to ldap server, or domain name incorrect: $ldap_server" );
         $RAD_REPLY{'Reply-Message'} = "2wauth denied access!";
         db_close($dbh);
         return RLM_MODULE_REJECT;
     }
-    $ldap->bind( "$user\@$domain", password => $password);
+    $ldap->bind("$user\@$domain", password => $password);
 
     my $result = $ldap->search(
         base => $ldap_users,
         filter => "(&(sAMAccountName=$user)(memberOf=$ldap_group))",
-        attrs => ["telephoneNumber"]
+        attrs => [$ldap_phone]
     );
 
     if ($result->code || $result->count == 0) {
-        &radiusd::radlog( Info, "$user\@$domain authentication failed" );
+        &radiusd::radlog(Info, "$user\@$domain authentication failed");
         $RAD_REPLY{'Reply-Message'} = "2wauth denied access!";
         db_close($dbh);
         return RLM_MODULE_REJECT;
@@ -128,18 +134,28 @@ sub authenticate {
 
     my $otp = `/usr/bin/pwgen -A -0 -B 6 1`;
     chomp($otp);
-    db_rm_otp($dbh, "$user\@$domain");
-    db_add_otp($dbh, "$user\@$domain", $otp);
+    if (!db_rm_otp($dbh, "$user\@$domain")) {
+        return RLM_MODULE_REJECT;
+    }
+    if (!db_add_otp($dbh, "$user\@$domain", $otp)) {
+        return RLM_MODULE_REJECT;
+    }
 
     my $phone = "0";
     foreach my $entry ($result->entries) {
-        $phone = $entry->get_value("telephoneNumber");
+        $phone = $entry->get_value($ldap_phone);
     }
     $ldap->unbind;
 
-    &radiusd::radlog( Info, "$user\@$domain authenticated sending otp to $phone" );
+    &radiusd::radlog(Info, "$user\@$domain authenticated sending otp to $phone");
     my $response = send_sms($phone, "$domain\n\ncode: $otp");
+    my $retry = 0;
     while (index($response, "ERROR") != -1) {
+        $retry += 1;
+        if ($retry > sms_retry) {
+            &radiusd::radlog(Info, "Failed sending SMS");
+            return RLM_MODULE_REJECT;
+        }
         $response = send_sms($phone, "$domain\n\ncode: $otp");
     }
 
@@ -197,7 +213,7 @@ sub post_auth {
 sub detach {
 
     # Do some logging.
-    &radiusd::radlog( 0, "rlm_perl::Detaching. Reloading. Done." );
+    &radiusd::radlog( Info, "rlm_perl::Detaching. Reloading. Done." );
 }
 
 #
@@ -205,29 +221,45 @@ sub detach {
 #
 
 sub send_sms {
-    my $pdu = sms($_[0], $_[1]);
-    my $pdu_length = (length($pdu) - 2) / 2;
-    my $socket = new IO::Socket::INET (
-        PeerHost => '192.168.9.4',
-        PeerPort => '4001',
-        Proto => 'tcp',
-    );
-    return "ERROR" unless $socket;
+    my $eval = eval {
+        local $SIG{ALRM} = sub { die 'timeout'; };
+        alarm 10;
+        my $pdu = sms($_[0], $_[1]);
+        my $pdu_length = (length($pdu) - 2) / 2;
+        my $socket = new IO::Socket::INET (
+            PeerHost => '192.168.9.4',
+            PeerPort => '4001',
+            Proto => 'tcp',
+        );
+        return "ERROR" unless $socket;
 
-    my $result;
-    $socket->send("ATZ\r\n");
-    $socket->recv($result, 1024);
-    sleep(0.2);
-    $socket->send("AT+CMGF=0\r\n");
-    $socket->recv($result, 1024);
-    sleep(0.2);
-    $socket->send("AT+CMGS=$pdu_length\r\n");
-    $socket->recv($result, 1024);
-    sleep(0.2);
-    $socket->send("$pdu\x1a\r\n");
-    $socket->recv($result, 1024);
-    $socket->close();
-    return $result;
+        my $result;
+        $socket->send("ATZ\r\n");
+        $socket->recv($result, 1024);
+        sleep(0.2);
+        $socket->send("AT+CMGF=0\r\n");
+        $socket->recv($result, 1024);
+        sleep(0.2);
+        $socket->send("AT+CMGS=$pdu_length\r\n");
+        $socket->recv($result, 1024);
+        sleep(0.2);
+        $socket->send("$pdu\x1a\r\n");
+        $socket->recv($result, 1024);
+        $socket->close();
+        alarm 0;
+        return $result;
+    };
+    alarm 0;
+    if ($eval) {
+        return $eval;
+    }
+    return "ERROR";
+}
+
+sub handle_dbi_error {
+    my $dbi_error = shift;
+    &radiusd::radlog( Info, "DBI Error: $dbi_error" );
+    return false;
 }
 
 sub db_init {
@@ -237,13 +269,13 @@ sub db_init {
     my $userid = "";
     my $password = "";
     my $dbh = DBI->connect($dsn, $userid, $password, { RaiseError => 0 })
-        or die $DBI::errstr;
+        or handle_dbi_error($DBI::errstr);
 
     my $stmt = qq(CREATE TABLE IF NOT EXISTS otp
         (username CHAR(64) PRIMARY KEY NOT NULL,
          otp CHAR(6) NOT NULL,
          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP););
-    my $rv = $dbh->do($stmt) or die $DBI::errstr;
+    my $rv = $dbh->do($stmt) or handle_dbi_error($DBI::errstr);
     return $dbh;
 }
 
@@ -253,14 +285,14 @@ sub db_add_otp {
     my $otp = $_[2];
     my $stmt = qq(INSERT INTO otp (username, otp)
         VALUES ("$username", "$otp"););
-    my $rv = $dbh->do($stmt) or die $DBI::errstr;
+    my $rv = $dbh->do($stmt) or handle_dbi_error($DBI::errstr);
 }
 
 sub db_rm_otp {
     my $dbh = $_[0];
     my $username = $_[1];
     my $stmt = qq(DELETE FROM otp WHERE username = "$username";);
-    my $rv = $dbh->do($stmt) or die $DBI::errstr;
+    my $rv = $dbh->do($stmt) or handle_dbi_error($DBI::errstr);
 }
 
 sub db_get_otp {
@@ -268,7 +300,7 @@ sub db_get_otp {
     my $username = $_[1];
     my $stmt = qq(SELECT otp FROM otp WHERE username = "$username";);
     my $sth = $dbh->prepare( $stmt );
-    my $rv = $sth->execute() or die $DBI::errstr;
+    my $rv = $sth->execute() or handle_dbi_error($DBI::errstr);
     while(my @row = $sth->fetchrow_array()) {
         return $row[0];
     }
