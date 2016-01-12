@@ -151,7 +151,7 @@ sub authenticate {
     my $response = send_sms($phone, "$domain\n\ncode: $otp");
     my $retry = 0;
     while (index($response, "ERROR") != -1) {
-        sleep(1);
+        sleep(2);
         $retry += 1;
         &radiusd::radlog(Info, "Failed sending SMS, retrying");
         if ($retry > sms_retry) {
