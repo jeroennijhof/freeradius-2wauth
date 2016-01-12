@@ -243,16 +243,16 @@ sub send_sms {
         sleep(0.2);
         $socket->send("AT+CMGF=0\r\n");
         $socket->recv($result, 1024);
-        $error = handle_at_error($result);
+        $error .= handle_at_error($result);
         sleep(0.2);
         $socket->send("AT+CMGS=$pdu_length\r\n");
         $socket->recv($result, 1024);
-        $error = handle_at_error($result);
+        $error .= handle_at_error($result);
         sleep(0.2);
         $socket->send("$pdu\x1a\r\n");
         $socket->recv($result, 1024);
-        $error = handle_at_error($result);
-        sleep(0.2);
+        $error .= handle_at_error($result);
+        sleep(2);
         $socket->close();
         alarm 0;
 
@@ -270,8 +270,8 @@ sub send_sms {
 
 sub handle_at_error {
     my $at_error = $_[0];
-    &radiusd::radlog( Info, "AT debug: $at_error" );
     if ($at_error =~ /ERROR/) {
+        &radiusd::radlog( Info, "AT Error: $at_error" );
         return "ERROR";
     }
 }
