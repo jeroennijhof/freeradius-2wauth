@@ -151,6 +151,7 @@ sub authenticate {
     my $response = send_sms($phone, "$domain\n\ncode: $otp");
     my $retry = 0;
     while (index($response, "ERROR") != -1) {
+        sleep(1);
         $retry += 1;
         &radiusd::radlog(Info, "Failed sending SMS, retrying");
         if ($retry > sms_retry) {
@@ -234,20 +235,29 @@ sub send_sms {
         );
         return "ERROR" unless $socket;
 
-        my $result;
+        my $result, $error;
         $socket->send("ATZ\r\n");
         $socket->recv($result, 1024);
+        $error = handle_at_error($result);
         sleep(0.2);
         $socket->send("AT+CMGF=0\r\n");
         $socket->recv($result, 1024);
+        $error = handle_at_error($result);
         sleep(0.2);
         $socket->send("AT+CMGS=$pdu_length\r\n");
         $socket->recv($result, 1024);
+        $error = handle_at_error($result);
         sleep(0.2);
         $socket->send("$pdu\x1a\r\n");
         $socket->recv($result, 1024);
+        $error = handle_at_error($result);
+        sleep(0.2);
         $socket->close();
         alarm 0;
+
+        if ($error) {
+            return "ERROR";
+        }
         return $result;
     };
     alarm 0;
@@ -255,6 +265,13 @@ sub send_sms {
         return $eval;
     }
     return "ERROR";
+}
+
+sub handle_at_error {
+    my $at_error = shift;
+    if ($at_error ~= /ERROR/) {
+        return "ERROR";
+    }
 }
 
 sub handle_dbi_error {
