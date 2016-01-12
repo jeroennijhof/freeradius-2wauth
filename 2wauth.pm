@@ -152,6 +152,7 @@ sub authenticate {
     my $retry = 0;
     while (index($response, "ERROR") != -1) {
         $retry += 1;
+        &radiusd::radlog(Info, "Failed sending SMS, retrying");
         if ($retry > sms_retry) {
             &radiusd::radlog(Info, "Failed sending SMS");
             return RLM_MODULE_REJECT;
