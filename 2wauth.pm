@@ -235,7 +235,8 @@ sub send_sms {
         );
         return "ERROR" unless $socket;
 
-        my $result, $error;
+        my $result;
+        my $error;
         $socket->send("ATZ\r\n");
         $socket->recv($result, 1024);
         $error = handle_at_error($result);
@@ -268,8 +269,8 @@ sub send_sms {
 }
 
 sub handle_at_error {
-    my $at_error = shift;
-    if ($at_error ~= /ERROR/) {
+    my $at_error = $_[0];
+    if ($at_error =~ /ERROR/) {
         return "ERROR";
     }
 }
