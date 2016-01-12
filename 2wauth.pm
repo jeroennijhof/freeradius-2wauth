@@ -270,6 +270,7 @@ sub send_sms {
 
 sub handle_at_error {
     my $at_error = $_[0];
+    &radiusd::radlog( Info, "AT debug: $at_error" );
     if ($at_error =~ /ERROR/) {
         return "ERROR";
     }
