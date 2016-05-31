@@ -39,12 +39,12 @@ use constant RLM_MODULE_NOOP     => 7; #  /* module succeeded without doing anyt
 use constant RLM_MODULE_UPDATED  => 8; #  /* OK (pairs modified) */
 use constant RLM_MODULE_NUMCODES => 9; #  /* How many return codes there are */
 
-our $ret_hash = { 
+our $ret_hash = {
     0 => "RLM_MODULE_REJECT",
     1 => "RLM_MODULE_FAIL",
     2 => "RLM_MODULE_OK",
     3 => "RLM_MODULE_HANDLED",
-    4 => "RLM_MODULE_INVALID", 
+    4 => "RLM_MODULE_INVALID",
     5 => "RLM_MODULE_USERLOCK",
     6 => "RLM_MODULE_NOTFOUND",
     7 => "RLM_MODULE_NOOP",
@@ -151,7 +151,6 @@ sub authenticate {
     my $response = send_sms($phone, "$domain\n\ncode: $otp");
     my $retry = 0;
     while (index($response, "ERROR") != -1) {
-        sleep(2);
         $retry += 1;
         &radiusd::radlog(Info, "Failed sending SMS, retrying");
         if ($retry > sms_retry) {
@@ -166,7 +165,6 @@ sub authenticate {
     $RAD_CHECK{'Response-Packet-Type'} = "Access-Challenge";
     db_close($dbh);
     return RLM_MODULE_HANDLED;
-
 }
 
 # Function to handle authorize
@@ -226,39 +224,12 @@ sub send_sms {
     my $eval = eval {
         local $SIG{ALRM} = sub { die 'timeout'; };
         alarm 10;
-        my $pdu = sms($_[0], $_[1]);
-        my $pdu_length = (length($pdu) - 2) / 2;
-        my $socket = new IO::Socket::INET (
-            PeerHost => '192.168.9.4',
-            PeerPort => '4001',
-            Proto => 'tcp',
-        );
-        return "ERROR" unless $socket;
-
-        my $result;
-        my $error;
-        $socket->send("ATZ\r\n");
-        $socket->recv($result, 1024);
-        $error = handle_at_error($result);
-        sleep(0.2);
-        $socket->send("AT+CMGF=0\r\n");
-        $socket->recv($result, 1024);
-        $error .= handle_at_error($result);
-        sleep(0.2);
-        $socket->send("AT+CMGS=$pdu_length\r\n");
-        $socket->recv($result, 1024);
-        $error .= handle_at_error($result);
-        sleep(0.2);
-        $socket->send("$pdu\x1a\r\n");
-        $socket->recv($result, 1024);
-        $error .= handle_at_error($result);
-        sleep(2);
-        $socket->close();
+        my $server = "";
+        my $key = "";
+        my $phone = $_[0];
+        my $sms = $_[1];
+        my $result = `/usr/bin/curl curl -X POST -F 'key=$key' -F 'phone=$phone' -F 'message=$sms' http://$server/sms`;
         alarm 0;
-
-        if ($error) {
-            return "ERROR";
-        }
         return $result;
     };
     alarm 0;
@@ -266,14 +237,6 @@ sub send_sms {
         return $eval;
     }
     return "ERROR";
-}
-
-sub handle_at_error {
-    my $at_error = $_[0];
-    if ($at_error =~ /ERROR/) {
-        &radiusd::radlog( Info, "AT Error: $at_error" );
-        return "ERROR";
-    }
 }
 
 sub handle_dbi_error {
@@ -329,64 +292,6 @@ sub db_get_otp {
 sub db_close {
     my $dbh = $_[0];
     $dbh->disconnect();
-}
-
-sub sms {
-    my ($phonenumber, $data) = @_;
-
-    my $pdu = '';
-    my $pdutype = 0;	
-
-    $pdu.='00';
-	
-    $pdutype=1;
-    $pdu.=sprintf("%02x", $pdutype);
-    $pdu.='00';				
-    $pdu.=encodeDestinationAddress($phonenumber);
-    $pdu.='00';
-
-    # 7bit (00), 7biti/flash (F0)
-    $pdu.='F0';
-
-    $pdu.=sprintf("%.2X", length($data));
-    $pdu.=encode_7bit(substr($data,0,160));
-		
-    return $pdu;
-}
-
-sub encodeDestinationAddress {
-    my ($number) = @_;
-    my $pdu;
-	
-    # Find type of phonenumber
-    # no + => unknown number, + => international number
-    my $type = (substr($number,0,1) eq '+')?'91':'81';
-	
-    # Delete any non digits => + etc...
-    $number =~ s/\D//g;
-	
-    $pdu.= sprintf("%.2X%s",length($number),$type);
-    $number.= "F";				# For odd number of digits
-    while ($number =~ /^(.)(.)(.*)$/) {	# Get pair of digits
-        $pdu.= "$2$1";
-        $number = $3;
-    }
-    return $pdu;
-}
-
-sub encode_7bit {
-    my ($msg) = @_;
-    my ($bits, $ud, $octet);
-
-    foreach (split(//,$msg)) {
-        $bits .= unpack('b7', $_);
-    }
-    while (defined($bits) && (length($bits)>0)) {
-        $octet = substr($bits,0,8);
-        $ud .= unpack("H2", pack("b8", substr($octet."0" x 7, 0, 8)));
-        $bits = (length($bits)>8)?substr($bits,8):"";
-    }
-    return uc $ud;
 }
 
 1;
