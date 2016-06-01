@@ -109,6 +109,12 @@ sub authenticate {
     my $ldap_users = $$ldap_conf{'ldap_users'};
     my $ldap_group = $$ldap_conf{'ldap_group'};
     my $ldap_phone = $$ldap_conf{'ldap_phone'};
+    if ($ldap_server == '') {
+        &radiusd::radlog( Info, "Config for domain not found" );
+        $RAD_REPLY{'Reply-Message'} = "2wauth denied access!";
+        db_close($dbh);
+        return RLM_MODULE_REJECT;
+    }
 
     my $ldap = Net::LDAP->new( $ldap_server );
     if (!$ldap) {
