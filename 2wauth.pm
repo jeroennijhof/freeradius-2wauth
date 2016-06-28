@@ -80,8 +80,14 @@ sub authenticate {
         $password = $RAD_REQUEST{'User-Password'};
     }
     my @tmp = split(/@/, $user);
-    $domain = lc($tmp[1]);
     $user = lc($tmp[0]);
+    $domain = lc($tmp[1]);
+    if ($domain == '') {
+        &radiusd::radlog( Info, "domain not found" );
+        $RAD_REPLY{'Reply-Message'} = "Please login with user\@domain!";
+        db_close($dbh);
+        return RLM_MODULE_REJECT;
+    }
 
     my $dbh = db_init();
     if (!$dbh) {
