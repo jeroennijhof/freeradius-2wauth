@@ -82,10 +82,9 @@ sub authenticate {
     my @tmp = split(/@/, $user);
     $user = lc($tmp[0]);
     $domain = lc($tmp[1]);
-    if ($domain == '') {
-        &radiusd::radlog( Info, "domain not found" );
-        $RAD_REPLY{'Reply-Message'} = "Please login with user\@domain!";
-        db_close($dbh);
+    if ($domain eq '') {
+        &radiusd::radlog( Info, "User login without domain" );
+        $RAD_REPLY{'Reply-Message'} = "Please login with user\@domain";
         return RLM_MODULE_REJECT;
     }
 
@@ -101,31 +100,37 @@ sub authenticate {
 
         if (index($password, $db_otp) != -1) {
             &radiusd::radlog( Info, "$user\@$domain otp successful" );
-            $RAD_REPLY{'Reply-Message'} = "2wauth access granted";
+            $RAD_REPLY{'Reply-Message'} = "Access granted";
             return RLM_MODULE_OK;
         }
         &radiusd::radlog( Info, "$user\@$domain otp failed" );
-        $RAD_REPLY{'Reply-Message'} = "2wauth denied access!";
+        $RAD_REPLY{'Reply-Message'} = "Access denied";
         return RLM_MODULE_REJECT;
     }
 
     my $conf = new Config::Simple('/etc/freeradius/2wauth.conf');
+    if (!defined($conf)) {
+        &radiusd::radlog( Info, "No domains found in config" );
+        $RAD_REPLY{'Reply-Message'} = "No domains found in config";
+        db_close($dbh);
+        return RLM_MODULE_REJECT;
+    }
     my $ldap_conf = $conf->param(-block => $domain);
     my $ldap_server = $$ldap_conf{'ldap_server'};
     my $ldap_users = $$ldap_conf{'ldap_users'};
     my $ldap_group = $$ldap_conf{'ldap_group'};
     my $ldap_phone = $$ldap_conf{'ldap_phone'};
-    if ($ldap_server == '') {
-        &radiusd::radlog( Info, "Config for domain not found" );
-        $RAD_REPLY{'Reply-Message'} = "2wauth denied access!";
+    if ($ldap_server eq '') {
+        &radiusd::radlog( Info, "Domain not found in config" );
+        $RAD_REPLY{'Reply-Message'} = "Domain not found in config";
         db_close($dbh);
         return RLM_MODULE_REJECT;
     }
 
     my $ldap = Net::LDAP->new( $ldap_server );
     if (!$ldap) {
-        &radiusd::radlog( Info, "Can't connect to ldap server, or domain name incorrect: $ldap_server" );
-        $RAD_REPLY{'Reply-Message'} = "2wauth denied access!";
+        &radiusd::radlog( Info, "Failed connecting to ldap server: $ldap_server" );
+        $RAD_REPLY{'Reply-Message'} = "Failed connecting to ldap server";
         db_close($dbh);
         return RLM_MODULE_REJECT;
     }
@@ -139,7 +144,7 @@ sub authenticate {
 
     if ($result->code || $result->count == 0) {
         &radiusd::radlog(Info, "$user\@$domain authentication failed");
-        $RAD_REPLY{'Reply-Message'} = "2wauth denied access!";
+        $RAD_REPLY{'Reply-Message'} = "Access denied";
         db_close($dbh);
         return RLM_MODULE_REJECT;
     }
