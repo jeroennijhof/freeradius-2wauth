@@ -120,6 +120,7 @@ sub authenticate {
     my $ldap_users = $$ldap_conf{'ldap_users'};
     my $ldap_group = $$ldap_conf{'ldap_group'};
     my $ldap_phone = $$ldap_conf{'ldap_phone'};
+    my $ldap_email = $$ldap_conf{'ldap_email'};
     if ($ldap_server eq '') {
         &radiusd::radlog( Info, "Domain not found in config" );
         $RAD_REPLY{'Reply-Message'} = "Domain not found in config";
@@ -139,7 +140,7 @@ sub authenticate {
     my $result = $ldap->search(
         base => $ldap_users,
         filter => "(&(sAMAccountName=$user)(memberOf=$ldap_group))",
-        attrs => [$ldap_phone]
+        attrs => [$ldap_phone, $ldap_email]
     );
 
     if ($result->code || $result->count == 0) {
@@ -159,12 +160,15 @@ sub authenticate {
     }
 
     my $phone = "0";
+    my $email = "";
     foreach my $entry ($result->entries) {
         $phone = $entry->get_value($ldap_phone);
+        $email = $entry->get_value($ldap_email);
     }
     $ldap->unbind;
 
-    &radiusd::radlog(Info, "$user\@$domain authenticated sending otp to $phone");
+    &radiusd::radlog(Info, "$user\@$domain authenticated sending otp to $phone and/or $email");
+    send_email($email, "$domain\n\ncode: $otp");
     my $response = send_sms($phone, "$domain\n\ncode: $otp");
     my $retry = 0;
     while (index($response, "ERROR") != -1) {
@@ -236,6 +240,13 @@ sub detach {
 #
 # Some functions that can be called from other functions
 #
+
+sub send_email {
+    my $from = "2wauth";
+    my $email = $_[0];
+    my $sms = $_[1];
+    my $result = `echo $sms|/usr/bin/mail -r $from -s '$sms' $email`
+}
 
 sub send_sms {
     my $eval = eval {
