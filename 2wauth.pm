@@ -159,26 +159,32 @@ sub authenticate {
         return RLM_MODULE_REJECT;
     }
 
-    my $phone = "0";
-    my $email = "";
+    my $phone = '';
+    my $email = '';
     foreach my $entry ($result->entries) {
         $phone = $entry->get_value($ldap_phone);
         $email = $entry->get_value($ldap_email);
     }
     $ldap->unbind;
 
-    &radiusd::radlog(Info, "$user\@$domain authenticated sending otp to $phone and/or $email");
-    send_email($email, "$domain\n\ncode: $otp");
-    my $response = send_sms($phone, "$domain\n\ncode: $otp");
-    my $retry = 0;
-    while (index($response, "ERROR") != -1) {
-        $retry += 1;
-        &radiusd::radlog(Info, "Failed sending SMS, retrying");
-        if ($retry > sms_retry) {
-            &radiusd::radlog(Info, "Failed sending SMS");
-            return RLM_MODULE_REJECT;
+    if ($phone ne '') {
+        &radiusd::radlog(Info, "$user\@$domain authenticated sending otp to $phone");
+        my $response = send_sms($phone, "$domain\n\ncode: $otp");
+        my $retry = 0;
+        while (index($response, "ERROR") != -1) {
+            $retry += 1;
+            &radiusd::radlog(Info, "Failed sending SMS, retrying");
+            if ($retry > sms_retry) {
+                &radiusd::radlog(Info, "Failed sending SMS");
+                return RLM_MODULE_REJECT;
+            }
+            $response = send_sms($phone, "$domain\n\ncode: $otp");
         }
-        $response = send_sms($phone, "$domain\n\ncode: $otp");
+    }
+
+    if ($email ne '') {
+        &radiusd::radlog(Info, "$user\@$domain authenticated sending otp to $email");
+        send_email($email, "code: $otp");
     }
 
     $RAD_REPLY{'State'} = "SMS";
@@ -242,18 +248,21 @@ sub detach {
 #
 
 sub send_email {
-    my $from = "2wauth";
+    my $global_conf = $conf->param(-block => 'global');
+    my $from = $$global_conf{'email_from'};
+    my $subject = $$global_conf{'email_subject'};
     my $email = $_[0];
     my $sms = $_[1];
-    my $result = `echo $sms|/usr/bin/mail -r $from -s '$sms' $email`
+    my $result = `echo $sms|/usr/bin/mail -r $from -s $subject $email`
 }
 
 sub send_sms {
     my $eval = eval {
         local $SIG{ALRM} = sub { die 'timeout'; };
         alarm 10;
-        my $server = "";
-        my $key = "";
+        my $global_conf = $conf->param(-block => 'global');
+        my $server = $$global_conf{'sms_server'};
+        my $key = $$global_conf{'sms_key'};
         my $phone = $_[0];
         my $sms = $_[1];
         my $result = `/usr/bin/curl curl -X POST -F 'key=$key' -F 'phone=$phone' -F 'message=$sms' http://$server/sms`;
