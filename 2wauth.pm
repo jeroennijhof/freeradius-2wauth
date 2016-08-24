@@ -249,7 +249,7 @@ sub detach {
 
 sub send_email {
     my $conf = new Config::Simple('/etc/freeradius/2wauth.conf');
-    my $global_conf = $conf->param(-block => 'global');
+    my $global_conf = $conf->param(-block => 'DEFAULT');
     my $from = $$global_conf{'email_from'};
     my $subject = $$global_conf{'email_subject'};
     my $email = $_[0];
@@ -262,7 +262,7 @@ sub send_sms {
         local $SIG{ALRM} = sub { die 'timeout'; };
         alarm 10;
         my $conf = new Config::Simple('/etc/freeradius/2wauth.conf');
-        my $global_conf = $conf->param(-block => 'global');
+        my $global_conf = $conf->param(-block => 'DEFAULT');
         my $server = $$global_conf{'sms_server'};
         my $key = $$global_conf{'sms_key'};
         my $phone = $_[0];
