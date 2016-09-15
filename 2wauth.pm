@@ -171,7 +171,7 @@ sub authenticate {
         &radiusd::radlog(Info, "$user\@$domain authenticated sending otp to $phone");
         my $response = send_sms($phone, "$domain\n\ncode: $otp");
         my $retry = 0;
-        while (index($response, "ERROR") != -1) {
+        while ($response != 0) {
             $retry += 1;
             &radiusd::radlog(Info, "Failed sending SMS, retrying");
             if ($retry > sms_retry) {
@@ -258,24 +258,13 @@ sub send_email {
 }
 
 sub send_sms {
-    my $eval = eval {
-        local $SIG{ALRM} = sub { die 'timeout'; };
-        alarm 10;
-        my $conf = new Config::Simple('/etc/freeradius/2wauth.conf');
-        my $global_conf = $conf->param(-block => 'DEFAULT');
-        my $server = $$global_conf{'sms_server'};
-        my $key = $$global_conf{'sms_key'};
-        my $phone = $_[0];
-        my $sms = $_[1];
-        my $result = `/usr/bin/curl curl -X POST -F 'key=$key' -F 'phone=$phone' -F 'message=$sms' http://$server/sms`;
-        alarm 0;
-        return $result;
-    };
-    alarm 0;
-    if ($eval) {
-        return $eval;
-    }
-    return "ERROR";
+    my $conf = new Config::Simple('/etc/freeradius/2wauth.conf');
+    my $global_conf = $conf->param(-block => 'DEFAULT');
+    my $server = $$global_conf{'sms_server'};
+    my $key = $$global_conf{'sms_key'};
+    my $phone = $_[0];
+    my $sms = $_[1];
+    return system("/usr/bin/curl --connect-timeout 5 -X POST -F 'key=$key' -F 'phone=$phone' -F 'message=$sms' http://$server/sms");
 }
 
 sub handle_dbi_error {
