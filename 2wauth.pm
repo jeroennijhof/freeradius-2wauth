@@ -143,7 +143,9 @@ sub authenticate {
         attrs => [$ldap_phone, $ldap_email]
     );
 
-    if ($result->code || $result->count == 0) {
+    my $errcode = $result->code;
+    if ($errcode || $result->count == 0) {
+        &radiusd::radlog(Info, "Error code $errcode");
         &radiusd::radlog(Info, "$user\@$domain authentication failed");
         $RAD_REPLY{'Reply-Message'} = "Access denied";
         db_close($dbh);
