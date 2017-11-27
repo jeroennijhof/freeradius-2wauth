@@ -115,17 +115,28 @@ sub authenticate {
         db_close($dbh);
         return RLM_MODULE_REJECT;
     }
+
+    my $default_conf = $conf->param(-block => 'DEFAULT');
     my $ldap_conf = $conf->param(-block => $domain);
     my $ldap_server = $$ldap_conf{'ldap_server'};
-    my $ldap_users = $$ldap_conf{'ldap_users'};
-    my $ldap_group = $$ldap_conf{'ldap_group'};
-    my $ldap_phone = $$ldap_conf{'ldap_phone'};
-    my $ldap_email = $$ldap_conf{'ldap_email'};
     if ($ldap_server eq '') {
-        &radiusd::radlog( Info, "Domain not found in config" );
-        $RAD_REPLY{'Reply-Message'} = "Domain not found in config";
-        db_close($dbh);
-        return RLM_MODULE_REJECT;
+        $ldap_server = $$default_conf{'ldap_server'};
+    }
+    my $ldap_users = $$ldap_conf{'ldap_users'};
+    if ($ldap_users eq '') {
+        $ldap_users = $$default_conf{'ldap_users'};
+    }
+    my $ldap_group = $$ldap_conf{'ldap_group'};
+    if ($ldap_group eq '') {
+        $ldap_group = $$default_conf{'ldap_group'};
+    }
+    my $ldap_phone = $$ldap_conf{'ldap_phone'};
+    if ($ldap_phone eq '') {
+        $ldap_phone = $$default_conf{'ldap_phone'};
+    }
+    my $ldap_email = $$ldap_conf{'ldap_email'};
+    if ($ldap_email eq '') {
+        $ldap_email = $$default_conf{'ldap_email'};
     }
 
     my $ldap = Net::LDAP->new( $ldap_server );
@@ -137,9 +148,14 @@ sub authenticate {
     }
     $ldap->bind("$user\@$domain", password => $password);
 
+    if (substr($ldap_group, 0, 1) ne ':') {
+        $ldap_group = "=".$ldap_group;
+    }
+
+    &radiusd::radlog( Info, "(&(sAMAccountName=$user)(memberOf$ldap_group))" );
     my $result = $ldap->search(
         base => $ldap_users,
-        filter => "(&(sAMAccountName=$user)(memberOf=$ldap_group))",
+        filter => "(&(sAMAccountName=$user)(memberOf$ldap_group))",
         attrs => [$ldap_phone, $ldap_email]
     );
 
